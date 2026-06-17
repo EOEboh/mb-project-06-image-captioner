@@ -1,17 +1,237 @@
+{{/*
+  index.html contains two named Go templates:
+    "index"  — full upload page, served on GET /
+    "result" — HTML fragment returned to HTMX on POST /caption
+
+  Both share the CSS defined in the "index" style block, the same pattern
+  established in Project 03 and followed in every project since.
+*/}}
+
+{{define "index"}}
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bootcamp Scaffold</title>
-    <link rel="stylesheet" href="/static/style.css">
-    <!-- HTMX: progressive enhancement for server interactions -->
-    <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Image Caption Generator — Project 06</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
+
+  <style>
+    body { display:flex; flex-direction:column; min-height:100vh; }
+
+    header { display:flex; align-items:center; gap:12px; padding:14px 24px; border-bottom:1px solid var(--border); flex-shrink:0; }
+    .logo { width:30px; height:30px; background:var(--accent); border-radius:6px; display:grid; place-items:center; font-size:14px; color:#000; font-weight:700; }
+    header h1 { font-size:0.95rem; font-weight:600; }
+    .model-badge { margin-left:auto; font-family:var(--font-mono); font-size:0.68rem; color:var(--accent); background:var(--accent-dim); padding:3px 10px; border-radius:99px; border:1px solid var(--accent); }
+
+    main { flex:1; max-width:760px; width:100%; margin:0 auto; padding:32px 24px 48px; }
+
+    /* ── Upload card ─────────────────────────────────────────────────── */
+    .upload-card { background:var(--surface); border:2px dashed var(--border); border-radius:12px; padding:36px 32px; text-align:center; transition:border-color 0.2s; }
+    .upload-card.dragover { border-color:var(--accent); background:var(--accent-dim); }
+
+    .upload-icon { font-size:2.2rem; margin-bottom:10px; opacity:0.6; }
+    .upload-card h2 { font-size:1.05rem; font-weight:600; margin-bottom:6px; }
+    .upload-card p { font-size:0.85rem; color:var(--text-muted); margin-bottom:20px; }
+
+    input[type="file"] { display:none; }
+
+    .file-label { display:inline-flex; align-items:center; gap:10px; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:10px 20px; font-size:0.88rem; cursor:pointer; transition:border-color 0.15s, color 0.15s; margin-bottom:18px; }
+    .file-label:hover { border-color:var(--accent); color:var(--accent); }
+
+    /* Local preview shown before upload, replaces the file-label */
+    #local-preview { display:none; max-width:240px; max-height:180px; border-radius:8px; margin-bottom:18px; border:1px solid var(--border); }
+
+    .constraints { font-size:0.74rem; color:var(--text-muted); margin-bottom:20px; }
+
+    /* ── Mode selector (pill buttons, same pattern as Project 03's format pills) ── */
+    .mode-pills { display:flex; justify-content:center; gap:6px; flex-wrap:wrap; margin-bottom:24px; }
+    .mode-pills input[type="radio"] { display:none; }
+    .mode-pills label { display:inline-block; padding:6px 16px; border-radius:99px; border:1px solid var(--border); font-size:0.82rem; color:var(--text-muted); cursor:pointer; transition:border-color 0.15s, color 0.15s, background 0.15s; }
+    .mode-pills input[type="radio"]:checked + label { border-color:var(--accent); color:var(--accent); background:var(--accent-dim); }
+    .mode-pills label:hover { border-color:var(--accent); color:var(--accent); }
+
+    button[type="submit"] { background:var(--accent); border:none; border-radius:var(--radius); color:#000; font-family:var(--font-sans); font-size:0.9rem; font-weight:600; padding:10px 28px; cursor:pointer; transition:opacity 0.15s, transform 0.1s; }
+    button[type="submit"]:hover { opacity:0.85; }
+    button[type="submit"]:active { transform:scale(0.97); }
+
+    /* ── HTMX loading indicator ──────────────────────────────────────── */
+    .htmx-indicator { opacity:0; transition:opacity 200ms ease; display:flex; align-items:center; justify-content:center; gap:8px; font-size:0.82rem; color:var(--text-muted); margin-top:14px; }
+    .htmx-indicator.htmx-request, .htmx-request .htmx-indicator { opacity:1; }
+    .spinner-ring { width:14px; height:14px; border:2px solid var(--border); border-top-color:var(--accent); border-radius:50%; animation:spin 0.7s linear infinite; }
+    @keyframes spin { to { transform:rotate(360deg); } }
+
+    /* ── Result area ─────────────────────────────────────────────────── */
+    #result { margin-top:28px; }
+
+    .empty-state { display:flex; flex-direction:column; align-items:center; justify-content:center; padding:40px 24px; gap:10px; color:var(--text-muted); text-align:center; }
+    .empty-state .icon { font-size:2rem; opacity:0.4; }
+    .empty-state p { font-size:0.86rem; max-width:280px; line-height:1.5; }
+
+    /* ── Result card ──────────────────────────────────────────────────── */
+    .result-card { display:flex; gap:20px; background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:20px; animation:fadeUp 0.25s ease; }
+    @keyframes fadeUp { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
+
+    .result-image { width:200px; height:200px; object-fit:cover; border-radius:8px; flex-shrink:0; border:1px solid var(--border); }
+
+    .result-content { flex:1; min-width:0; }
+    .result-mode-tag { font-size:0.7rem; font-weight:700; text-transform:uppercase; letter-spacing:0.1em; color:var(--accent); margin-bottom:8px; }
+    .result-caption { font-size:0.96rem; color:var(--text); line-height:1.7; margin-bottom:14px; }
+    .result-filename { font-size:0.75rem; color:var(--text-muted); font-family:var(--font-mono); }
+
+    .copy-row { display:flex; gap:8px; margin-top:12px; }
+    .copy-btn { background:transparent; border:1px solid var(--border); border-radius:6px; color:var(--text-muted); font-size:0.78rem; padding:5px 14px; cursor:pointer; transition:border-color 0.15s, color 0.15s; }
+    .copy-btn:hover { border-color:var(--accent); color:var(--accent); }
+
+    .error-box { background:#2a1a1a; border:1px solid #5a2a2a; border-radius:var(--radius); padding:14px 18px; color:#f87171; font-size:0.88rem; }
+  </style>
 </head>
 <body>
-    <main>
-        <h1>Bootcamp Scaffold</h1>
-        <p>Replace this template with your own project UI</p>
-    </main>
+
+  <header>
+    <div class="logo">◈</div>
+    <h1>Image Caption Generator</h1>
+    <span class="model-badge">llava:7b · ollama</span>
+  </header>
+
+  <main>
+    <!--
+      hx-encoding="multipart/form-data" — required for file uploads, same
+      attribute introduced in Project 04's resume upload form.
+    -->
+    <form
+      hx-post="/caption"
+      hx-target="#result"
+      hx-swap="innerHTML"
+      hx-indicator="#spinner"
+      hx-encoding="multipart/form-data"
+    >
+      <div class="upload-card" id="upload-card">
+        <div class="upload-icon" id="upload-icon">🖼️</div>
+        <h2>Upload an Image</h2>
+        <p>Get an AI-generated caption, alt text, or social media description.</p>
+
+        <input type="file" name="image" id="image-input" accept="image/jpeg,image/png,image/webp">
+
+        <img id="local-preview" alt="Selected image preview">
+
+        <label for="image-input" class="file-label" id="file-label">
+          <span>📎</span>
+          <span id="file-label-text">Choose an image</span>
+        </label>
+
+        <div class="constraints">JPEG, PNG, or WEBP · Maximum 5 MB</div>
+
+        <div class="mode-pills">
+          <input type="radio" name="mode" id="mode-describe" value="describe" checked>
+          <label for="mode-describe">Describe</label>
+
+          <input type="radio" name="mode" id="mode-alt" value="alt-text">
+          <label for="mode-alt">Alt Text</label>
+
+          <input type="radio" name="mode" id="mode-social" value="social">
+          <label for="mode-social">Social Caption</label>
+
+          <input type="radio" name="mode" id="mode-detailed" value="detailed">
+          <label for="mode-detailed">Detailed</label>
+        </div>
+
+        <button type="submit">Generate Caption</button>
+
+        <div id="spinner" class="htmx-indicator">
+          <div class="spinner-ring"></div>
+          <span>Analysing image with LLaVA… this can take 20–40 seconds</span>
+        </div>
+      </div>
+    </form>
+
+    <div id="result">
+      <div class="empty-state">
+        <span class="icon">◈</span>
+        <p>Upload an image above to generate a caption.</p>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    // Local preview before upload — shows the selected image immediately
+    // using the browser's own FileReader, no server round trip needed.
+    // This is distinct from the server-rendered preview in the result card,
+    // which proves the image Ollama actually received matches what was sent.
+    const input   = document.getElementById('image-input');
+    const preview = document.getElementById('local-preview');
+    const label   = document.getElementById('file-label');
+    const labelText = document.getElementById('file-label-text');
+
+    input.addEventListener('change', function () {
+      const file = this.files[0];
+      if (!file) {
+        preview.style.display = 'none';
+        label.style.display = 'inline-flex';
+        return;
+      }
+      labelText.textContent = file.name;
+
+      const reader = new FileReader();
+      reader.onload = e => {
+        preview.src = e.target.result;
+        preview.style.display = 'block';
+      };
+      reader.readAsDataURL(file);
+    });
+  </script>
+
 </body>
 </html>
+{{end}}
+
+
+{{/*
+  "result" template — HTML fragment returned to HTMX on POST /caption.
+  Rendered server-side, swapped into <div id="result"> by HTMX.
+*/}}
+
+{{define "result"}}
+{{if .Error}}
+  <div class="error-box">⚠ {{.Error}}</div>
+{{else}}
+  <div class="result-card">
+    <!--
+      The image is rendered directly from the base64 string the handler
+      already encoded for Ollama — no second copy, no temp file, no extra
+      request. A data URI is just "data:<mime>;base64,<data>".
+    -->
+    <img
+      class="result-image"
+      src="data:{{.ImageMIME}};base64,{{.ImageData}}"
+      alt="{{.AltText}}"
+    >
+
+    <div class="result-content">
+      <div class="result-mode-tag">{{.ModeLabel}}</div>
+      <p class="result-caption" id="caption-text">{{.Caption}}</p>
+      <div class="result-filename">{{.FileName}}</div>
+
+      <div class="copy-row">
+        <button class="copy-btn" onclick="copyCaption()">Copy Caption</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function copyCaption() {
+      const text = document.getElementById('caption-text').textContent;
+      navigator.clipboard.writeText(text).then(() => {
+        const btn = document.querySelector('.copy-btn');
+        const original = btn.textContent;
+        btn.textContent = 'Copied!';
+        setTimeout(() => { btn.textContent = original; }, 1500);
+      });
+    }
+  </script>
+{{end}}
+{{end}}
